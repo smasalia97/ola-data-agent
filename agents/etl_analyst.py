@@ -48,7 +48,7 @@ def transform_load_tool(input_file_path: str, output_folder: str, output_format:
 
     """
     etl_tools = ETLTools()
-    top_3_rows = etl_tools.transform_load_context(input_file_path, output_folder, output_format, user_question)
+    top_3_rows = etl_tools.transform_load_context(input_file_path)
     llm = pick_llm("medium")
 
     prompt = f"""
@@ -74,7 +74,7 @@ def transform_load_tool(input_file_path: str, output_folder: str, output_format:
     # Execute the generated Pandas code
     execution_result = etl_tools.execute_code(pandas_code)
 
-    return f"The data is transformed and saved at {output_folder} in {output_format} format. \n\n Pandas Code Executed: \n {pandas_code} \n\n Execution Result: \n {results}"
+    return f"The data is transformed and saved at {output_folder} in {output_format} format. \n\n Pandas Code Executed: \n {pandas_code} \n\n Execution Result: \n {execution_result}"
 
 
 # Toolkit
@@ -119,4 +119,62 @@ def tool_node(state: ETLAgentSchema):
 
     for tool_call in tool_calls:
         tool = tools_by_name.get(tool_call['name'])
-        observation = tool.invoke(**tool_call['args'])
+        observation = tool.invoke(tool_call['args'])
+
+        tools_results.append(ToolMessage(content=observation, tool_call_id = tool_call['id']))
+
+    state.messages = state.messages + tools_results
+
+    return state
+
+
+# Nodes & Edges
+etl_analyst_graph = StateGraph(ETLAgentSchema)
+etl_analyst_graph.add_node("llm_node", llm_node)
+etl_analyst_graph.add_node("tool_node", tool_node)
+
+etl_analyst_graph.add_edge(START, "llm_node")
+
+def is_tool_call(state:ETLAgentSchema):
+    tool_calls = state.messages[-1].tool_calls
+
+    if tool_calls:
+        return "tool_node"
+    else:
+        return "end"
+
+etl_analyst_graph.add_conditional_edges(
+    "llm_node",is_tool_call,
+    {
+        "tool_node": "tool_node",
+        "end": END
+    }
+)
+
+etl_analyst_graph.add_edge("tool_node", "llm_node")
+
+etl_analyst = etl_analyst_graph.compile()
+
+if __name__ == "__main__":
+    # Compile the Graph
+    
+
+    # Optional
+    from IPython.display import display, Image
+    img = Image(etl_analyst.get_graph().draw_mermaid_png())
+    with open("etl_analyst_graph.png", "wb") as f:
+        f.write(img.data)
+
+    # response = etl_analyst.invoke(
+    #     {"messages":[HumanMessage(content="I want to extract the data from the API endpoint 'https://pokeapi.co/api/v2/pokemon' and save it to data/extract folder in the csv folder")]}
+    # )
+
+    response = etl_analyst.invoke(
+         {"messages":[HumanMessage(content=f"""
+            I want to transform the data stored in the '/Users/saiyammasalia/Personal Projects:Tutorials/Ola AI Agentic Project/data/extract/data.csv' file 
+            and save the transformed data in the '/Users/saiyammasalia/Personal Projects:Tutorials/Ola AI Agentic Project/data/transform' folder in the csv format.
+            The transformation should filter the data to show bulbasaur pokemon only.
+        """)]}
+    )   
+
+    print(response)
